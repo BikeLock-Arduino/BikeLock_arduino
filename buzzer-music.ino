@@ -1,10 +1,10 @@
 #include <Tone.h>
-#include "music.h"
+#include "songs/garden.h"
 
 #define BUZZER_1 11
 #define BUZZER_2 12
 #define BUTTON 2
-#define LED A0
+#define LED 13
 
 Tone tone1;
 Tone tone2;
@@ -18,16 +18,26 @@ int index2 = 0;
 bool finished1 = false;
 bool finished2 = false;
 
+int sz1, sz2;
+
 volatile bool playing = false;
 
 void setup() {
+  Serial.begin(9600);
   tone1.begin(BUZZER_1);
   tone2.begin(BUZZER_2);
   
-  pinMode(BUTTON, INPUT);
-  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonPressHandler, FALLING);
+  pinMode(BUTTON, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonPressHandler, RISING);
 
   pinMode(LED, OUTPUT);
+
+  sz1 = sizeof(melody1)/sizeof(long);
+  sz2 = sizeof(melody2)/sizeof(long);
+
+  Serial.println("Hi");
+  Serial.println(pgm_read_dword_near(delays1 + 0));
+  Serial.println("Bye");
 }
 
 void loop() {
@@ -36,55 +46,28 @@ void loop() {
   currentMicros = micros();
 
   if (currentMicros >= next1) {
-    playNotes1();
+    playNotes(&tone1, &next1, &index1, delays1, melody1, sz1);
   }
 
   if (currentMicros >= next2) {
-    playNotes2();
+    playNotes(&tone2, &next2, &index2, delays2, melody2, sz2);
   }
 }
 
-void playNotes1() {
-  int d1 = pgm_read_word_near(delays1 + index1);
+void playNotes(Tone *tn, unsigned long *next, int *index, const unsigned long *delays, const unsigned long *melody, int sz) {
+  unsigned long d = pgm_read_dword_near(delays + *index); // us
 
-  next1 = currentMicros + 1000l * d1;
+  *next += d;
 
-  if (index1 < sizeof(melody1)/sizeof(int)) {
-    int note1 = pgm_read_word_near(melody1 + index1);
-    if (note1 != 0) {
-      tone1.play(note1, pgm_read_word_near(delays1 + index1));
+  if (*index < sz) {
+    int note = pgm_read_dword_near(melody + *index);
+    if (note != 0) {
+      tn->play(note, d / 1000L);
     }
-    index1++;
-  }
+    (*index)++;
 
-  // Check if melodies finished
-  if (index1 >= sizeof(melody1)/sizeof(int)) {
-    if (finished2)
+    if (index1 >= sz1 && index2 >= sz2)
       resetPlayback(true);
-    else
-      finished1 = true;
-  }
-}
-
-void playNotes2() {
-  int d2 = pgm_read_word_near(delays2 + index2);
-
-  next2 = currentMicros + 1000l * d2;
-
-  if (index2 < sizeof(melody2)/sizeof(int)) {
-    int note2 = pgm_read_word_near(melody2 + index2);
-    if (note2 != 0) {
-      tone2.play(note2, pgm_read_word_near(delays2 + index2));
-    }
-    index2++;
-  }
-
-  // Check if melodies finished
-  if (index1 >= sizeof(melody1)/sizeof(int)) {
-    if (finished1)
-      resetPlayback(true);
-    else
-      finished2 = true;
   }
 }
 
@@ -96,13 +79,15 @@ void resetPlayback(bool stop) {
   index2 = 0;
   finished1 = false;
   finished2 = false;
-  
+  tone1.stop();
+  tone2.stop();
 }
 
 void buttonPressHandler() {
   int time = millis();
   if (time - lastPress < 30) return; // 30ms debounce
   lastPress = time;
+  delay(2500);
   playing = !playing;
   resetPlayback(false);
   digitalWrite(LED, playing ? HIGH : LOW);
