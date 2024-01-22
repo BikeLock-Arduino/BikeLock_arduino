@@ -22,8 +22,11 @@ volatile state_t state;
 volatile unsigned long nextCheck;
 volatile bool firstAlarm;
 
+// A software only way to reset the board
 void (*resetBoard) (void) = 0;
 
+// `bsd` implementation of the strlen method
+// We have this to avoid importing the whole string.h library
 size_t strlen(const char *str) {
   const char *s;
 
@@ -32,6 +35,8 @@ size_t strlen(const char *str) {
   return (s - str);
 }
 
+// A method that formats logs in such a way that they will never be interpreted by the ESP
+// and automatically ignores the ERROR it returns
 void log(const char* message, int length) {
   delay(50);
 
@@ -72,19 +77,12 @@ void log(String message) {
   log(message.c_str(), message.length());
 }
 
-
+// Read everything from the Serial
+// Useful when searching for specific characters there
+// (such as when interpreting JSON)
 void emptySerial() {
   while(Serial.available() > 0)
     Serial.read();
-}
-
-void echoSerial() {
-  long deadline = millis() + 500;
-
-  while (millis() < deadline) {
-    if (Serial.available())
-      Serial.write(Serial.read());
-  }
 }
 
 const int Serial_timeout = 100; // ms
@@ -115,14 +113,18 @@ int Serial_peek_to() {
   return -1;
 }
 
+// Find the given keyword within the given time
+// Returns whether the kw was found
 bool echoFind(String keyword, long timeout){
   byte current_char = 0;
   byte keyword_length = keyword.length();
+  
   long deadline = millis() + timeout;
+
   while(millis() < deadline){
     if (Serial.available()){
       char ch = Serial.read();
-      // Serial.write(ch);
+
       if (ch == keyword[current_char]) {
         if (++current_char == keyword_length) {
           return true;
@@ -132,18 +134,6 @@ bool echoFind(String keyword, long timeout){
   }
 
   return false; // Timed out
-}
-
-void assertOK(String keyword, const char *errorMsg) {
-  if (echoFind(keyword, TIMEOUT)) return;
-
-  log(errorMsg);
-  
-  delay(900);
-  log("Error encountered, resetting board");
-
-  delay(100);
-  resetBoard();
 }
 
 void configureNetwork(bool full) {
@@ -157,9 +147,6 @@ void configureNetwork(bool full) {
       
       Serial.print("AT+RST\r\n");
       if (!echoFind("OK", 1000)) continue;
-      // echoSerial();
-
-      // return;
       
       delay(3000);
 
@@ -177,7 +164,6 @@ void configureNetwork(bool full) {
     if (full) {
       Serial.print("AT+CIFSR\r\n");
       while(Serial.available() == 0) {};
-      // Serial.println(mySerial.readString());
 
       delay(10);
 
@@ -191,7 +177,6 @@ void configureNetwork(bool full) {
 
 void setup() {
   Serial.begin(115200);
-  // mySerial.begin(115200);
 
   while (!Serial) {
     delay(10); // wait for serial port to connect
@@ -200,10 +185,9 @@ void setup() {
   configureNetwork(true);
 
   // If we're here, connection must be OK
-
   pinMode(BUZZER, OUTPUT);
 
-  // Connected sound
+  // Play network connected sound
   play1UpSound();
 
   state = UNLOCKED;
@@ -212,11 +196,12 @@ void setup() {
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
 
-  // Attach interrupt
+  // Attach interrupt for motion detection
   pinMode(2, INPUT);
   attachInterrupt(digitalPinToInterrupt(2), startAlarm, RISING);
 }
 
+// Given a key, looks for said key surrounded by " and followed by :
 bool Serial_findJSONKey(const char *key) {
   bool found = false;
   bool next = false;
@@ -248,6 +233,7 @@ bool Serial_findJSONKey(const char *key) {
   return found;
 }
 
+// Connects the ESP to our remote server
 bool startTCPConnection() {
   Serial.print("AT+CIPSTATUS\r\n");
   if (!echoFind("STATUS:", TIMEOUT)) {
@@ -279,6 +265,7 @@ bool startTCPConnection() {
 
 volatile unsigned int fails = 0;
 
+// Sends a TCP request to the remote server
 int api_sendTCP(const char *command) {
   if (!startTCPConnection()) {
     fails++;
